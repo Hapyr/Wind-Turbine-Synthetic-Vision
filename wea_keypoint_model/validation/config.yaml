@@ -1,0 +1,12 @@
+#Data
+path: /home/jakob/Dokumente/IRT/modele_final/val_data
+train: /home/jakob/Dokumente/IRT/modele_final/val_data/dataset
+val: /home/jakob/Dokumente/IRT/modele_final/val_data/dataset
+
+#keypoints
+kpt_shape: [7,2] #number of keypoints, number of dim
+flip_idx: [0,1,2,3,4,5,6]
+
+#classes
+names:
+   0: WEA
