@@ -17,6 +17,7 @@ Future development will include:
 - NumPy, Pillow, OpenCV, and other standard Python libraries
 
 ## Installation
+For detailed documentation on installation and usage, please see the information in the readme file in the toolbox folder. 
 
 It is recommended to use a virtual environment to manage dependencies.
 
