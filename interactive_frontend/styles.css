@@ -142,7 +142,6 @@ body.fullscreen #controls:hover {
 
 @media only screen and (max-width: 600px) {
     .upload-panel {
-        background-color: lightblue;
         max-width: 800px;
     }
 }
