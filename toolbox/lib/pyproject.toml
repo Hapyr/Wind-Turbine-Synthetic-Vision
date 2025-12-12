@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling >= 1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wind-turbine-synthetic-vision"
+version = "0.0.6"
+authors = [
+  { name="Jakob Gebler", email="jakobgebler@mail.de" },
+  { name="Arash Shahirpour", email="a.shahirpour@irt.rwth-aachen.de" },
+]
+description = "This repository contains the code used to generate synthetic images of wind turbine tower."
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+license = "AGPL-3.0"
