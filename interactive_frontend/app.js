@@ -28,6 +28,7 @@ let currentCameraIndex = 0;
 let availableCameras = [];
 let isProcessing = false;
 let lastDetections = [];
+let hasUserSwitchedCamera = false;  // Track if user manually switched camera
 
 // FPS counters
 let frameCount = 0;
@@ -115,14 +116,24 @@ async function startCamera() {
         stream.getTracks().forEach(track => track.stop());
     }
     
-    const constraints = {
-        video: {
-            deviceId: availableCameras[currentCameraIndex]?.deviceId,
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
-            frameRate: { ideal: TARGET_FPS }
-        }
+    // Build video constraints
+    // Default to environment (rear) camera for mobile devices
+    // Only use specific deviceId when user has manually switched cameras
+    const videoConstraints = {
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        frameRate: { ideal: TARGET_FPS }
     };
+    
+    if (hasUserSwitchedCamera && availableCameras[currentCameraIndex]?.deviceId) {
+        // User manually switched camera - use specific deviceId
+        videoConstraints.deviceId = { exact: availableCameras[currentCameraIndex].deviceId };
+    } else {
+        // Default to environment (rear) camera on mobile devices
+        videoConstraints.facingMode = { ideal: 'environment' };
+    }
+    
+    const constraints = { video: videoConstraints };
     
     stream = await navigator.mediaDevices.getUserMedia(constraints);
     video.srcObject = stream;
@@ -138,6 +149,7 @@ async function startCamera() {
 
 // Switch between cameras
 async function switchCamera() {
+    hasUserSwitchedCamera = true;  // User manually switching - use specific deviceId
     currentCameraIndex = (currentCameraIndex + 1) % availableCameras.length;
     await startCamera();
 }
