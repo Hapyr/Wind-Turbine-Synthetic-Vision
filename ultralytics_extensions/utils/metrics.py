@@ -1,5 +1,11 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
-"""Model validation metrics."""
+#
+# Original Author: Ultralytics
+# Modified by: Jakob Gebler on 06.2025
+#
+# Modification Summary:
+# - Implemented permutation-invariant metric for symmetric keypoints (Wind Turbine Tips).
+# - Added helper functions `align_tensors` and `get_aligned_d`.
 
 import math
 import warnings
@@ -20,6 +26,9 @@ OKS_SIGMA = (
 def align_tensors(A, B):
     """
     Aligns tensor B to tensor A by permuting the points in B to minimize MSE.
+
+    Note:
+        Logic for symmetric point alignment contributed by Jakob Gebler.
 
     Args:
         A (torch.Tensor): Tensor of shape (batch_size, num_points, coord_dim)
@@ -55,6 +64,23 @@ def align_tensors(A, B):
 
 
 def get_aligned_d(kpt1, kpt2):
+    """
+    Helper function to compute Euclidean distances with permutation alignment.
+
+    This expands keypoints to compare every prediction against every ground truth,
+    applying alignment logic specifically to keypoints at indices 4, 5, and 6
+    (designed for symmetric keypoints like wind turbine tips).
+
+    Note:
+        Implementation contributed by Jakob Gebler.
+
+    Args:
+        kpt1 (torch.Tensor): Ground truth keypoints (N, 7, 2).
+        kpt2 (torch.Tensor): Predicted keypoints (M, 7, 2).
+
+    Returns:
+        torch.Tensor: Pairwise squared distances (N, M, 7).
+    """
     # Reshape and broadcast
     a_expanded = kpt1.unsqueeze(1)
     b_expanded = kpt2.unsqueeze(0)
@@ -84,6 +110,10 @@ def get_aligned_d(kpt1, kpt2):
 def kpt_iou(kpt1, kpt2, area, sigma, eps=1e-7):
     """
     Calculate Object Keypoint Similarity (OKS).
+
+    Note:
+        Uses 'get_aligned_d' to handle symmetric keypoint alignment (tips) rather than standard broadcasting.
+        Implementation contributed by Jakob Gebler.
 
     Args:
         kpt1 (torch.Tensor): A tensor of shape (N, 17, 3) representing ground truth keypoints.

@@ -1,4 +1,11 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+#
+# Original Author: Ultralytics
+# Modified by: Jakob Gebler on 06.2025
+#
+# Modification Summary:
+# - Implemented permutation-invariant loss for symmetric keypoints (Wind Turbine Tips).
+# - Added helper functions `align_tensors`.
 
 import torch
 import torch.nn as nn
@@ -15,6 +22,9 @@ class KeypointLoss(nn.Module):
     def align_tensors(self, A, B):
         """
         Aligns tensor B to tensor A by permuting the points in B to minimize MSE.
+
+        Note:
+            Permutation alignment logic contributed by Jakob Gebler.
 
         Args:
             A (torch.Tensor): Tensor of shape (batch_size, num_points, coord_dim)
@@ -48,7 +58,16 @@ class KeypointLoss(nn.Module):
         return B_aligned
 
     def forward(self, pred_kpts, gt_kpts, kpt_mask, area):
-        """Calculates keypoint loss factor and Euclidean distance loss for predicted and actual keypoints."""
+        """
+        Calculates keypoint loss factor and Euclidean distance loss for predicted and actual keypoints.
+
+        **Modified Implementation:**
+        This forward pass includes specific logic for aligning symmetric keypoints
+        (e.g., wind turbine tips) where the order of points 4, 5, and 6 is ambiguous.
+
+        Contribution:
+            Wind turbine tip alignment logic developed by Jakob Gebler.
+        """
 
         pred_kpts_1234 = pred_kpts[:, :4, :]
         gt_kpts_1234 = gt_kpts[:, :4, :]

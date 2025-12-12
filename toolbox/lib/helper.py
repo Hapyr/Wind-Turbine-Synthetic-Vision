@@ -1,215 +1,240 @@
-# Wind Turbine Synthetic Vision
-# Copyright (C) 2025 Arash Shahirpour, Jakob Gebler, Manuel Sanders
-# Institute of Automatic Control - RWTH Aachen University
-
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU Affero General Public License for more details.
-
-# You should have received a copy of the GNU Affero General Public License
-# along with this program. If not, see <https://www.gnu.org/licenses/>.
-
 import bpy
 import random
 import math
 import numpy as np
 from PIL import Image
-import colorsys
 import os
 import datetime
-from typing import TypedDict, NamedTuple, List, Callable
+from typing import TypedDict, NamedTuple, List
 import mathutils
 import bpy_types
+import requests
+import json
+
+
+default_color_codes = [
+    (255, 0, 0),  # Red - shaft bottom
+    (0, 255, 0),  # Green - shaft top
+    (0, 0, 255),  # Blue - housing back
+    (255, 255, 0),  # Yellow - rotor middle
+    (255, 0, 255),  # Magenta - rotor tip 1 (top)
+    (0, 255, 255),  # Cyan - rotor tip 2 (right)
+    (255, 128, 0),  # Orange - rotor tip 3 (left)
+]
 
 
 class OutputPathsDict(TypedDict):
+    """Directory paths for a single dataset split (training, visualization, validation)."""
+
     path_images: str
     path_images_keypoints: str
     path_keypoints: str
 
 
 class OutputPaths(TypedDict):
+    """Complete directory structure for training and validation datasets."""
+
     training: OutputPathsDict
     validation: OutputPathsDict
 
 
-class WeaPoints(NamedTuple):
-    obj_all: bpy_types.Object
-    obj_housing: bpy_types.Object
-    obj_rotor_wrapper: bpy_types.Object
-    obj_rotor_all: bpy_types.Object
-    obj_rotor_middle: bpy_types.Object
-    obj_rotor_tip_1: bpy_types.Object
-    obj_rotor_tip_2: bpy_types.Object
-    obj_rotor_tip_3: bpy_types.Object
-    obj_housing_back: bpy_types.Object
-    obj_tower_top: bpy_types.Object
-    obj_tower_bottom: bpy_types.Object
+class WTObjectSet(NamedTuple):
+    """A collection of objects representing a wind turbine."""
+
+    obj_all: bpy_types.Collection
+    tower: bpy_types.Object
+    housing: bpy_types.Object
+    rotor: bpy_types.Object
+    kp_housing_back: bpy_types.Object
+    kp_housing_front: bpy_types.Object
+    kp_tower_top: bpy_types.Object
+    kp_tower_bottom: bpy_types.Object
+    kp_tip_1: bpy_types.Object
+    kp_tip_2: bpy_types.Object
+    kp_tip_3: bpy_types.Object
+
+    def set_xy_position(self, x: float, y: float):
+        """Set the x and y coordinates of the wind turbine.
+
+        Args:
+            x (float): The x coordinate of the wind turbine.
+            y (float): The y coordinate of the wind turbine.
+        """
+        self.tower.location[0] = x
+        self.tower.location[1] = y
 
 
-# In Blender können Eigenschaften von Objekten und der Welt durch Nodes zusammengesetzt und eingestellt werden. Die Nodes werden aber beim Aufruf der Szene in
-# BlenderProc fehlerhaft übernommen. Daher werden diese mithilfe der Funktionen 'create_world_nodes' und 'set_ocean_texture' neu erstellt. 'create_world_nodes'
-# benutzt dabei die Funktion 'create_node', welche Nodes in Blender erzeugt.
-def create_node(node_type, node_name, location):
-    node = bpy.context.scene.world.node_tree.nodes.new(type=node_type)
-    node.location = location
-    node.name = node_name
-    return node
+def sample_distribution(distribution: str, param_1: float, param_2: float):
+    """Sample a value from a specified distribution.
+
+    Args:
+        distribution: Distribution type ("normal" or "uniform").
+        param_1: For normal: mean, for uniform: lower bound.
+        param_2: For normal: standard deviation, for uniform: upper bound.
+
+    Returns:
+        float: Sampled value from the distribution.
+
+    Raises:
+        ValueError: If distribution type is not supported.
+    """
+    if distribution == "normal":
+        return random.normalvariate(param_1, param_2)
+    elif distribution == "uniform":
+        return random.uniform(param_1, param_2)
+    else:
+        raise ValueError(f"Invalid distribution: {distribution}")
 
 
-# rekursive Funkiton, um alle Kindobjekte eines Objekts mit einer bestimmten Eigenschaft zu versehen (wird bei der nächsten Funktion benötigt)
-def set_property(obj, property_name, property_value):
-    obj[property_name] = property_value
-    for child in obj.children:
-        set_property(child, property_name, property_value)
+def set_category_ids(wea_selection: List[WTObjectSet]):
+    """
+    Set the category_id property for the objects in the wea_selection list to 1 and for all other objects to 0.
 
-
-# Die Funktion 'custom_properties_eins' setzt die Eigenschaft 'category_id' auf 0 für alle Objekte, die nicht 'shaft' im Namen haben. Für alle Objekte, die 'shaft' im Namen
-# haben, wird die Eigenschaft auf 1 gesetzt. Für die Welt wird die Eigenschaft ebenfalls auf 0 gesetzt.
-def custom_properties_eins():
+    Args:
+        wea_selection (List[WTObjectSet]): List of WTObjectSet objects.
+    """
     prop_name = "category_id"
 
     for obj in bpy.data.objects:
         obj[prop_name] = 0
 
-    for obj in bpy.context.scene.objects:
-        if "shaft_" in obj.name.lower():
-            prop_value = 1
-            if obj:
-                set_property(obj, prop_name, prop_value)
+    for obj in wea_selection:
+        obj.tower[prop_name] = 1
+        obj.housing[prop_name] = 1
+        obj.rotor[prop_name] = 1
 
     bpy.context.scene.world[prop_name] = 0
 
 
-def create_world_nodes():
-    # Überprüfe, ob eine Welt-Node-Gruppe vorhanden ist, erstelle eine falls nicht
-    if bpy.context.scene.world.use_nodes and bpy.context.scene.world.node_tree is None:
-        bpy.context.scene.world.node_tree = bpy.data.node_groups.new(
-            type="ShaderNodeTree", name="MyWorldNodes"
-        )
+def randomize_sky_texture(sky_texture: bpy.types.ShaderNodeTexSky, config: dict):
+    """Randomize sky texture parameters based on configuration.
 
-    # Da bei der Ausführung von BlenderProc eine zusätzliche Background und Output Node erstellt wird, werden diese zunächst gelöscht.
-    world_tree = bpy.data.worlds["World"].node_tree
-    for node in world_tree.nodes:
-        if node.type in {"BACKGROUND", "OUTPUT_WORLD"}:
-            world_tree.nodes.remove(node)
+    Args:
+        sky_texture: Blender sky texture node to modify.
+        config: Dictionary containing distribution parameters for each sky property.
+    """
 
-    # Hier beginnt die Erstellung und die Verknüpfung der eigenen Nodes:
-    # Erstellen der Skytexture Node
-    sky_texture = create_node("ShaderNodeTexSky", "Sky Texture", (0, 0))
-    # Einstellungen für die Skytexture Node
-    sky_texture.sky_type = "NISHITA"
+    sky_texture.sky_type = config["TYPE"]
     sky_texture.sun_disc = True
-    sky_texture.sun_intensity = 10
-    sky_texture.sun_size = 0.523599
-    sky_texture.sun_elevation = 1.173
-    sky_texture.sun_rotation = 3.22699
-    sky_texture.air_density = 0.2
-    sky_texture.dust_density = 0
-    sky_texture.ozone_density = 5.07
-    sky_texture.altitude = 0
 
-    # Erstellen der AddShader Nodes
-    add_shader = create_node("ShaderNodeAddShader", "Add Shader", (400, 0))
-
-    # Verbinden des AddShader Nodes mit der Background Node
-    bpy.context.scene.world.node_tree.links.new(
-        add_shader.inputs[0], sky_texture.outputs["Color"]
+    sky_texture.sun_intensity = np.clip(
+        sample_distribution(
+            config["SUN_INTENSITY"]["DISTRIBUTION"],
+            config["SUN_INTENSITY"]["ARG_1"],
+            config["SUN_INTENSITY"]["ARG_2"],
+        ),
+        0.0,
+        1000.0,
+    )
+    sky_texture.sun_size = np.clip(
+        sample_distribution(
+            config["SUN_SIZE"]["DISTRIBUTION"],
+            config["SUN_SIZE"]["ARG_1"],
+            config["SUN_SIZE"]["ARG_2"],
+        ),
+        0.0,
+        1.5708,
+    )
+    sky_texture.sun_elevation = sample_distribution(
+        config["SUN_ELEVATION"]["DISTRIBUTION"],
+        config["SUN_ELEVATION"]["ARG_1"],
+        config["SUN_ELEVATION"]["ARG_2"],
+    )
+    sky_texture.sun_rotation = sample_distribution(
+        config["SUN_ROTATION"]["DISTRIBUTION"],
+        config["SUN_ROTATION"]["ARG_1"],
+        config["SUN_ROTATION"]["ARG_2"],
+    )
+    sky_texture.air_density = np.clip(
+        sample_distribution(
+            config["AIR_DENSITY"]["DISTRIBUTION"],
+            config["AIR_DENSITY"]["ARG_1"],
+            config["AIR_DENSITY"]["ARG_2"],
+        ),
+        0.0,
+        10.0,
+    )
+    sky_texture.dust_density = np.clip(
+        sample_distribution(
+            config["DUST_DENSITY"]["DISTRIBUTION"],
+            config["DUST_DENSITY"]["ARG_1"],
+            config["DUST_DENSITY"]["ARG_2"],
+        ),
+        0.0,
+        10.0,
+    )
+    sky_texture.ozone_density = np.clip(
+        sample_distribution(
+            config["OZONE_DENSITY"]["DISTRIBUTION"],
+            config["OZONE_DENSITY"]["ARG_1"],
+            config["OZONE_DENSITY"]["ARG_2"],
+        ),
+        0.0,
+        10.0,
+    )
+    sky_texture.turbidity = np.clip(
+        sample_distribution(
+            config["TURBIDITY"]["DISTRIBUTION"],
+            config["TURBIDITY"]["ARG_1"],
+            config["TURBIDITY"]["ARG_2"],
+        ),
+        0.0,
+        10.0,
+    )
+    sky_texture.altitude = np.clip(
+        sample_distribution(
+            config["SUN_ALTITUDE"]["DISTRIBUTION"],
+            config["SUN_ALTITUDE"]["ARG_1"],
+            config["SUN_ALTITUDE"]["ARG_2"],
+        ),
+        0.0,
+        10000.0,
     )
 
-    # Erstellen und Verbinden der Output Node
-    output_node = create_node("ShaderNodeOutputWorld", "Output", (600, 0))
-    bpy.context.scene.world.node_tree.links.new(
-        output_node.inputs["Surface"], add_shader.outputs["Shader"]
-    )
 
-    # Erstellen einer weiteren Background Node
-    background2 = create_node("ShaderNodeBackground", "Background2", (200, -600))
-
-    # Erstellen und Verbinden der ColorRamp Node
-    color_ramp = create_node("ShaderNodeValToRGB", "Color Ramp", (-100, -600))
-    color_ramp.color_ramp.interpolation = "LINEAR"
-    color_ramp.color_ramp.elements[1].position = 1
-    color_ramp.color_ramp.elements[0].position = 0
-    bpy.context.scene.world.node_tree.links.new(
-        background2.inputs["Color"], color_ramp.outputs["Color"]
-    )
-
-    # Erstellen und Verbinden der MusgraveTexture Node
-    musgrave_texture = create_node(
-        "ShaderNodeTexMusgrave", "Musgrave Texture", (-400, -600)
-    )
-    musgrave_texture.inputs[2].default_value = 1
-    musgrave_texture.inputs[3].default_value = 10
-    musgrave_texture.inputs[4].default_value = 0.3
-    musgrave_texture.inputs[5].default_value = 2
-    bpy.context.scene.world.node_tree.links.new(
-        color_ramp.inputs["Fac"], musgrave_texture.outputs["Fac"]
-    )
-
-    # Erstellen und Verbinden der Gradient Texture Node
-    gradient_texture = create_node(
-        "ShaderNodeTexGradient", "Gradient Texture", (-200, -1200)
-    )
-    bpy.context.scene.world.node_tree.links.new(
-        background2.inputs["Strength"], gradient_texture.outputs["Fac"]
-    )
-
-    # Erstellen und Verbinden der Mapping Node
-    mapping_node = create_node("ShaderNodeMapping", "Mapping", (-400, -1200))
-    mapping_node.inputs[2].default_value[1] = 1.5708
-    bpy.context.scene.world.node_tree.links.new(
-        gradient_texture.inputs["Vector"], mapping_node.outputs["Vector"]
-    )
-
-    # Erstellen der Texture Coordinate Node
-    tex_coord = create_node("ShaderNodeTexCoord", "Texture Coordinate", (-600, -1200))
-    bpy.context.scene.world.node_tree.links.new(
-        mapping_node.inputs["Vector"], tex_coord.outputs["Generated"]
-    )
-
-    bpy.context.scene.world.node_tree.links.new(
-        add_shader.inputs[1], background2.outputs["Background"]
-    )
-
-def brightness_distribution_sample_normal():
-    return 1.0 + random.normalvariate(mu=0, sigma=0.3)
-
-
-def shift_hue_random(image, brightness_distribution_sample: Callable[[], float] = brightness_distribution_sample_normal):
+def shift_hue_random(
+    image,
+    config: dict,
+):
     """Shift the hue of a PIL RGBA image.
     Args:
         image (PIL.Image.Image): The input image.
     Returns:
         PIL.Image.Image: The shifted image.
     """
-    hue_shift = random.normalvariate(mu=0, sigma=10)
-    sat_shift = random.normalvariate(mu=0, sigma=10)
-    # val_shift = 1 + abs(random.normalvariate(mu=0, sigma=0.1))
-    val_factor = brightness_distribution_sample()
 
-    # Convert hue shift to PIL's 0-255 scale
-    h_shift = int((hue_shift / 360) * 256)
-    s_shift = int((sat_shift / 100) * 255)
-
-    # Split into RGB and Alpha channels
+    # Extract alpha channel from original RGBA image before converting to HSV
     r, g, b, a = image.split()
-    rgb_img = Image.merge("RGB", (r, g, b))
 
-    # Convert to HSV
-    hsv_img = rgb_img.convert("HSV")
-    h, s, v = hsv_img.split()
+    # Convert RGB channels to HSV (without alpha)
+    rgb_image = Image.merge("RGB", (r, g, b))
+    hsv_image = rgb_image.convert("HSV")
+    h, s, v = hsv_image.split()
+
+    hue_shift = sample_distribution(
+        config["HUE_SHIFT"]["DISTRIBUTION"],
+        config["HUE_SHIFT"]["ARG_1"],
+        config["HUE_SHIFT"]["ARG_2"],
+    )
+    sat_shift = sample_distribution(
+        config["SATURATION_SHIFT"]["DISTRIBUTION"],
+        config["SATURATION_SHIFT"]["ARG_1"],
+        config["SATURATION_SHIFT"]["ARG_2"],
+    )
+    val_shift = sample_distribution(
+        config["VALUE_SHIFT"]["DISTRIBUTION"],
+        config["VALUE_SHIFT"]["ARG_1"],
+        config["VALUE_SHIFT"]["ARG_2"],
+    )
+
+    hue_shift = hue_shift * 255 / 360
+    sat_shift = sat_shift * 255 / 100
+    val_shift = val_shift * 255 / 100
 
     # Apply adjustments with numpy
-    h_np = (np.array(h) + h_shift) % 256  # Hue wrapping
-    s_np = np.clip(np.array(s) + s_shift, 0, 255)  # Saturation clamping
-    v_np = np.clip(np.array(v) * val_factor, 0, 255)  # Value clamping
+    h_np = np.clip(np.array(h) + hue_shift, 0, 255)  # Hue clamping
+    s_np = np.clip(np.array(s) + sat_shift, 0, 255)  # Saturation clamping
+    v_np = np.clip(np.array(v) + val_shift, 0, 255)  # Value clamping
 
     # Convert back to PIL Images
     h_new = Image.fromarray(h_np.astype(np.uint8), "L")
@@ -226,311 +251,610 @@ def shift_hue_random(image, brightness_distribution_sample: Callable[[], float] 
 
 
 def rotate_rotor(
-    wea_selection: List[WeaPoints],
-    angle_rotor_low: int = 0,
-    angle_rotor_high: int = 119,
+    wea_selection: List[WTObjectSet],
+    fixed: bool = False,
+    min_angle: int = 0,
+    max_angle: int = 119,
 ):
-    """The rotate_rotor function adjusts the rotor blades of the wind turbine (WEA). Since each blade is assigned a fixed positional identifier (1 = top, 2 = right, 3 = left), the rotor rotation is restricted to angles <120° to ensure the blades maintain their positional assignments. The angle of rotation is sampled from a uniform distribution.
-    The rotors are installed in relation to another coordinate system. The reason for this is that the rotors are slightly inclined and should also be rotated around their axis. This cannot be implemented in Blender without an additional coordinate system. The coordinate systems each have the name 'empty.XXX'. Now all objects containing the name 'empty' are called up. This means the coordinate systems on the rotors.
+    """Rotate the rotor of the wind turbines (WEAs) from the given list of WTObjectSet objects.
 
     Args:
-        angle_rotor_low (int, optional): smallest angle that can be sampled from the distribution in degrees. Defaults to 0.
-        angle_rotor_high (int, optional): largest angle that can be sampled from the distribution in degrees. Defaults to 119.
+        wea_selection (List[WTObjectSet]): List of WTObjectSet objects.
+        fixed (bool, optional): If True, the rotor is not rotated and set to the min_angle. Defaults to False.
+        min_angle (int, optional): smallest angle that can be sampled from the distribution in degrees. Defaults to 0.
+        max_angle (int, optional): largest angle that can be sampled from the distribution in degrees. Defaults to 119.
     """
     for wea in wea_selection:
-        angle = random.uniform(angle_rotor_low, angle_rotor_high)
-        wea.obj_rotor_wrapper.rotation_euler[0] = math.radians(angle)
+        if not fixed:
+            angle = random.uniform(min_angle, max_angle)
+        else:
+            angle = min_angle
+        wea.rotor.rotation_euler[1] = math.radians(angle)
 
 
 def scale_shaft(
-    wea_selection: List[WeaPoints], scale_random: bool = True, factor: float = 0.0
+    wea_selection: List[WTObjectSet],
+    scale_random: bool = True,
+    scaling_factor_min: float = 0.0,
+    scaling_factor_max: float = 0.0,
 ):
-    """Scales the shaft of the wind turbine (WEA).
+    """Scale the shaft of the wind turbines (WEAs) from the given list of WTObjectSet objects.
+    This allows to have different proportions between the blades and the height of the wind turbine.
 
     Args:
-        wea_selection (List[WeaPoints]): List of WeaPoints objects.
+        wea_selection (List[WTObjectSet]): List of WTObjectSet objects.
         scale_random (bool, optional): If True, the shaft is scaled randomly. Defaults to True.
         factor (float, optional): The factor by which the shaft is scaled when scale_random is False. Defaults to 0.0.
+
+    Returns:
+        List[float]: List of scaling factors.
     """
     scaling_factors = []
     for wea in wea_selection:
         if scale_random:
-            factor = random.uniform(0.5, 1.2)
-            wea.obj_rotor_all.delta_scale = mathutils.Vector((1.0 * factor, 1.0 * factor, 1.0))
+            factor = random.uniform(scaling_factor_min, scaling_factor_max)
+            wea.rotor.delta_scale = mathutils.Vector((1.0 * factor, 1.0 * factor, 1.0))
         else:
-            factor = 1.0
-            wea.obj_rotor_all.delta_scale = mathutils.Vector((1.0 * factor, 1.0 * factor, 1.0))
+            factor = scaling_factor_min
+            wea.rotor.delta_scale = mathutils.Vector((1.0 * factor, 1.0 * factor, 1.0))
         scaling_factors.append(factor)
 
     return scaling_factors
 
+
 def rotate_housing(
-    wea_selection: List[WeaPoints],
-    mean_angle=0,
-    std_deviation=45 / 3,
-    normal_distributed=True,
+    wea_selection: List[WTObjectSet],
+    mean_angle: float = 0.0,
+    std_deviation: float = 15.0,
+    normal_distributed: bool = True,
+    fixed: bool = False,
+    min_angle: float = 0.0,
+    max_angle: float = 360.0,
 ):
-    """Rotarotates objects in a blender scene that start with 'housing_' by a random angle.
+    """Rotate the housing of the wind turbine (WEA) from the given list of WTObjectSet objects.
     The normal distribution for the rotation can be useful if there are several wind turbines on the scene and they should all point in the wind direction,
     with slight deviations.
-
+    With fixed=True, the function will set the angle to the mean_angle. It can still be normally distributed around this fixed angle.
 
     Args:
+        wea_selection (List[WTObjectSet]): List of WTObjectSet objects.
         mean_angle (int, optional): When normal_distributed this is the mean of the distribution. Defaults to 0.
         std_deviation (_type_, optional): When normal_distributed this is the standard deviation of the distribution. Defaults to 45/3.
         normal_distributed (bool, optional): when false, the function rotate each object uniform randomly. Defaults to True.
+        fixed (bool, optional): If True, the function will not rotate the objects. Defaults to False.
+        min_angle (int, optional): Minimum angle of the distribution. Defaults to 0.
+        max_angle (int, optional): Maximum angle of the distribution. Defaults to 360.
     """
+
+    if not fixed:
+        mean_angle = random.uniform(min_angle, max_angle)
 
     for wea in wea_selection:
         if normal_distributed:
             angle = random.gauss(mean_angle, std_deviation)
         else:
-            angle = random.uniform(0, 360)
-        wea.obj_housing.rotation_euler[2] = math.radians(angle)
+            if not fixed:
+                angle = random.uniform(min_angle, max_angle)
+            else:
+                angle = mean_angle
+        wea.housing.rotation_euler[2] = math.radians(angle)
 
 
-# Die Funktion 'randomization_Wolken' verändert die Fülle der Wolken.
-def randomization_Wolken():
-    # Mit einer Wahrscheinlichkeit von 20% wird die Dichte der Wolken auf 0 gesetzt. Ansonsten wird die Dichte der Wolken zufällig zwischen 0.1 und 10 gewählt.
-    if random.random() < 0.2:
-        Dichte_Wolken = 0
-    else:
-        Dichte_Wolken = random.uniform(0.1, 10)
-
-    # Die Dichte der Wolken wird in der Musgrave Texture Node eingestellt.
-    musgrave_texture = bpy.data.worlds["World"].node_tree.nodes["Musgrave Texture"]
-    musgrave_texture.inputs[2].default_value = math.radians(Dichte_Wolken)
-
-
-def randomization_sky_texture(
-    fog_intensity_min: float = 0.1,
-    fog_intensity_max: float = 3.0,
-    sun_elevation_min: int = 0,
-    sun_elevation_max: int = 90,
-    sun_rotation_min: int = 0,
-    sun_rotation_max: int = 360,
+def generate_wind_turbine_set_from_map(
+    centered_wt: bool = True,
+    boundary_left_angle: int = 0,
+    boundary_right_angle: int = 0,
+    min_distance_between_wts: int = 60,
+    max_distance: int = 100,
+    expnsn_ref: float = 0.0,
+    min_distance_cam_wt: float = 20.0,
+    turbine_map=None,
 ):
-    """changes the intensity of the fog and the position of the sun of a blender scene
+    """Position the wind turbines randomly within a specific area. The wind turbines are positioned in the x and y directions.
 
     Args:
-        fog_intensity_min (float, optional): minimum value for the fog intensity. Defaults to 0.1.
-        fog_intensity_max (float, optional): maximum value for the fog intensity. Defaults to 3.0.
-        sun_elevation_min (int, optional): solar height angle minimum. Defaults to 0.
-        sun_elevation_max (int, optional): solar height angle maximum. Defaults to 90.
-        sun_rotation_min (int, optional): azimuth angle minimum. Defaults to 0.
-        sun_rotation_max (int, optional): azimuth angle maximum. Defaults to 360.
+        number_of_wts (int, optional): Number of wind turbines to be generated. Defaults to 1.
+        centered_wt (bool, optional): If True, one wind turbines is centered in the camera view. Defaults to True.
+        boundary_left_angle (int, optional): Minimum angle of the left boundary in degrees. The angle is measured from the positive y-axis in counterclockwise direction. Defaults to 0.
+        boundary_right_angle (int, optional): Maximum angle of the right boundary in degrees. The angle is measured from the positive y-axis in clockwise direction. Defaults to 100.
+        min_distance_between_wts (int, optional): Minimum distance between wind turbines. Defaults to 0.
+        max_distance (int, optional): Maximum distance from the center of the scene to the wind turbines. Defaults to 100.
+        turbine_map (vector, non optional): The map of the wind park.
     """
 
-    # The Sky_Texture Node is selected in order to manipulate it
-    sky_texture = bpy.data.worlds["World"].node_tree.nodes["Sky Texture"]
+    def get_xy_sample(
+        distance_max: int = 100,
+        boundary_left_angle: int = 0,
+        boundary_right_angle: int = 0,
+    ):
+        """Get a random position for a wind turbine.
+        The position is sampled in cylindrical coordinates, by sampling angle and distance uniformly.
+        The xy-position is then calculated from the cylindrical coordinates.
 
-    sky_texture.dust_density = random.uniform(fog_intensity_min, fog_intensity_max)
-    sky_texture.sun_elevation = math.radians(
-        random.uniform(sun_elevation_min, sun_elevation_max)
-    )
-    sky_texture.sun_rotation = math.radians(
-        random.uniform(sun_rotation_min, sun_rotation_max)
-    )
-    sky_texture.sun_disc = False
+        Args:
+            distance_max (int, optional): Maximum distance from (0,0) to the wind turbines. Defaults to 100.
+            boundary_left_angle (int, optional): Minimum angle of the left boundary in degrees. The angle is measured from the positive y-axis in counterclockwise direction. Defaults to 0.
+            boundary_right_angle (int, optional): Maximum angle of the right boundary in degrees. The angle is measured from the positive y-axis in clockwise direction. Defaults to 0.
 
+        Returns:
+            tuple: A tuple containing the x and y coordinates of the wind turbine.
+        """
+        distance = random.uniform(0, distance_max)
+        angle_deg = random.uniform(0, boundary_left_angle + boundary_right_angle) + 90 - boundary_right_angle
+        angle_rad = math.radians(angle_deg)
 
-def generate_wea_set(distance_close: int = 800, distance_far: int = 800):
-    """Positions the wind turbines randomly within a specific area. The wind turbines are positioned in the x and y directions.
+        return distance * math.cos(angle_rad), distance * math.sin(angle_rad)
 
-    Args:
-        distance_close (int, optional): Minimum distance with random selection of distance. Defaults to 0.
-        distance_far (int, optional): Maximum distance with random selection of distance. Defaults to 1000.
-    """
+    def is_in_range(pos_x, pos_y, min_distance_between_wts, xy_placed):
+        """Check if a position is in range of another wind turbine.
 
-    # Change the wind turbine in the foreground (pay attention to the naming of the wind turbine in Blender)
+        Args:
+            pos_x (float): x-coordinate of the position to check.
+            pos_y (float): y-coordinate of the position to check.
+            min_distance_between_wts (float): Minimum distance between wind turbines.
+            xy_placed (list): List of already placed wind turbines.
+
+        Returns:
+            bool: True if the position is in range of another wind turbine, False otherwise.
+        """
+        for x, y in xy_placed:
+            if math.sqrt((pos_x - x) ** 2 + (pos_y - y) ** 2) < min_distance_between_wts:
+                return True
+        return False
+
+    def cross_product(p, q, r):
+        """Do cross product for the vectors pq and pr with points p, q, and r given."""
+        a = q - p
+        b = r - p
+        cross_2d = a[0] * b[1] - a[1] * b[0]
+        len_a = np.sqrt(np.power(a[0], 2) + np.power(a[1], 2))
+        len_b = np.sqrt(np.power(b[0], 2) + np.power(b[1], 2))
+        return cross_2d, len_a, len_b
+
+    def dot_product(p, q, r):
+        """Do dot product for the vectors pq and pr with points p, q, and r given."""
+        a = q - p
+        b = r - p
+        dot_prod = a[0] * b[0] + a[1] * b[1]
+        len_a = np.sqrt(np.power(a[0], 2) + np.power(a[1], 2))
+        len_b = np.sqrt(np.power(b[0], 2) + np.power(b[1], 2))
+        return dot_prod, len_a, len_b
+
+    def cmpt_expnsn_ang(r, p, q):
+        """Compute the angle of the expansion vector. The expansion vector is the vector that when added to a
+        given vertex, establishes the new vertex of the new and expanded polygon."""
+        rp = p - r
+        pq = q - p
+        ang_1 = math.atan2(rp[1], rp[0]) - math.pi / 2
+        ang_2 = math.atan2(pq[1], pq[0]) - math.pi / 2
+        expnsn_ang = (ang_2 - ang_1) / 2 + ang_1
+        dot_prod, len_a, len_b = dot_product(p, q, r)
+        dot_product_angle = math.acos(dot_prod / (len_a * len_b))
+        expnsn_ang = ang_1 + (math.pi - dot_product_angle) / 2
+        return expnsn_ang
+
+    map_matrix_size = turbine_map.shape
+    if map_matrix_size[0] == 2 and map_matrix_size[1] >= 4:
+        turbine_map = turbine_map.T
+    elif not (map_matrix_size[0] >= 4 and map_matrix_size[1] == 2) and not (
+        map_matrix_size[0] == 2 and map_matrix_size[1] >= 4
+    ):
+        raise SyntaxError(
+            f"The dimension of the windturbine map is not correct. It should be either nx2 or 2xn and currently is: {map_matrix_size}."
+        )
+    map_matrix_len = turbine_map.shape[0]
+
+    # get all object from the blender scene that start with 'wt_' (wind turbine collections)
+    wt_collections = []
+    for col in bpy.data.collections:
+        col.hide_render = True
+        if col.name.lower().startswith("wt_"):
+            wt_collections.append(col)
+
+    if map_matrix_len > len(wt_collections):
+        raise ValueError(
+            f"number_of_wts is larger than the number of wt collections: {map_matrix_len} > {len(wt_collections)}"
+        )
+
+    # select a random number of wind turbine collections
+    collections_selected = random.sample(wt_collections, map_matrix_len)
+
+    # list of already placed wind turbines as WTObjectSet list
     return_objects = []
 
-    # get all shaft objects
-    shafts = [
-        obj
-        for obj in bpy.context.scene.objects
-        if "shaft" in obj.name.lower()
-        and "shaft_oben" not in obj.name.lower()
-        and "shaft_unten" not in obj.name.lower()
-    ]
-    shafts_selected = random.sample(
-        shafts, random.choice([1, 1, 1, 1, 1, 1, 2, 2, 2, 3, 3, 4])
+    # place the wind turbines based on the map
+    # find the polygon around the wind park
+    ind_p = np.argmin(turbine_map[:, 1])  # find the lowest point
+    ind_p_init = ind_p
+    poly_list = []
+    poly_list.append(ind_p)
+    finish_while = 0
+    while not (finish_while):
+        ind_q = (ind_p + 1) % map_matrix_len
+        for ind_r in range(map_matrix_len):
+            p = turbine_map[ind_p, :]
+            q = turbine_map[ind_q, :]
+            r = turbine_map[ind_r, :]
+            cross_2d, len_a, len_b = cross_product(p, q, r)
+            if cross_2d == 0:
+                if len_b >= len_a:
+                    ind_q = ind_r
+            elif cross_2d < 0:
+                ind_q = ind_r
+        ind_p = ind_q
+        poly_list.append(ind_p)
+        if ind_p == ind_p_init:
+            finish_while = 1
+
+    # expand the polygon
+    len_poly = len(poly_list) - 1
+    expnsn_poly_vrtcs = np.zeros((len_poly, 2))
+    for i in range(len_poly):
+        p = turbine_map[poly_list[i], :]
+        q = turbine_map[poly_list[(i + 1) % len_poly], :]
+        r = turbine_map[poly_list[(i - 1) % len_poly], :]
+        dot_prod, len_a, len_b = dot_product(p, q, r)
+        vrtc_ang = math.acos(dot_prod / (len_a * len_b))  # calculate the angle between given vectors
+        expnsn_mag = expnsn_ref / math.sin(
+            vrtc_ang / 2
+        )  # based on the expnsn_ref, calculate the magnitude of the expansion vector
+        expnsn_ang = cmpt_expnsn_ang(r, p, q)  # calculate the angle of the expansion vector
+        vrtc_new = p + expnsn_mag * np.array([math.cos(expnsn_ang), math.sin(expnsn_ang)])  # calculate the new vertex
+        expnsn_poly_vrtcs[i, :] = vrtc_new
+
+    # find a single point uniformly randomly within the polygon
+    # first, divide the polygon into triangles
+    n_tri = len_poly - 2  # number of the created triangles
+    ind_triangles = np.zeros((n_tri, 3), dtype=int)
+
+    for j in range(n_tri):
+        ind_triangles[j, :] = [0, j + 1, j + 2]
+
+    # calculate the area of each resulting triangle
+    area = np.zeros((1, n_tri))
+    ind_p0 = ind_triangles[0, 0]
+    ind_q0 = ind_triangles[0, 1]
+    ind_r0 = ind_triangles[0, 2]
+    cross_2d, len_a, len_b = cross_product(
+        expnsn_poly_vrtcs[ind_p0], expnsn_poly_vrtcs[ind_q0], expnsn_poly_vrtcs[ind_r0]
     )
+    area[0, 0] = abs(cross_2d) / 2
+    for i in range(1, n_tri):
+        p = expnsn_poly_vrtcs[ind_triangles[i, 0]]
+        q = expnsn_poly_vrtcs[ind_triangles[i, 1]]
+        r = expnsn_poly_vrtcs[ind_triangles[i, 2]]
+        cross_2d, len_a, len_b = cross_product(p, q, r)
+        area[0, i] = area[0, i - 1] + abs(cross_2d) / 2
+    area_total = int(area[0, n_tri - 1])
 
-    for obj in shafts_selected:
-        y_koordinate = random.uniform(distance_close, distance_far)
+    # select a triangle randomly based on the areas
+    rand_area = random.uniform(0, area_total)
+    rand_tri = np.searchsorted(area[0, :], rand_area)
+    # find a random point within the randomly selected triangle
+    p = expnsn_poly_vrtcs[ind_triangles[rand_tri, 0]]
+    q = expnsn_poly_vrtcs[ind_triangles[rand_tri, 1]]
+    r = expnsn_poly_vrtcs[ind_triangles[rand_tri, 2]]
+    tri_vec_1 = q - p
+    tri_vec_2 = r - p
+    rand_1 = random.uniform(0, 1)
+    rand_2 = random.uniform(0, 1)
+    if (rand_1 + rand_2) > 1:
+        rand_1 = 1 - rand_1
+        rand_2 = 1 - rand_2
+    camera_position = p + rand_1 * tri_vec_1 + rand_2 * tri_vec_2
 
-        x_koordinate = random.uniform(20, y_koordinate)
-        if random.random() < 0.5:
-            x_koordinate = -x_koordinate
-
-        obj.location[0] = x_koordinate
-        obj.location[1] = y_koordinate
-
-        if obj.children[0].rotation_euler[2] > math.pi:
-            tip_2 = obj.children[0].children[0].children[0].children[2]
-            tip_3 = obj.children[0].children[0].children[0].children[3]
+    # find the closest wind turbine, assigning it the wind turbine of interest (wtoi)
+    cmr_wt_dis = abs(turbine_map - camera_position)
+    dist_list = np.zeros((1, map_matrix_len))
+    for i in range(map_matrix_len):
+        dist_list[0, i] = np.sqrt(np.power(cmr_wt_dis[i, 0], 2) + np.power(cmr_wt_dis[i, 1], 2))
+    ind_wtoi = np.argmin(dist_list)
+    # secure a minimum distance to the closest wind turbine
+    dist_wtoi = dist_list[0, ind_wtoi]
+    if dist_wtoi < min_distance_cam_wt:
+        if dist_wtoi == 0:
+            search_ang = random.uniform(0, 360) / 180 * math.pi
         else:
-            tip_2 = obj.children[0].children[0].children[0].children[3]
-            tip_3 = obj.children[0].children[0].children[0].children[2]
+            wt2cam = camera_position - turbine_map[ind_wtoi, :]
+            search_ang = math.atan2(wt2cam[1], wt2cam[0])
+        camera_position = (min_distance_cam_wt - dist_wtoi) * wt2cam / (
+            np.sqrt(np.power(wt2cam[0], 2)) + np.power(wt2cam[1], 2)
+        ) + turbine_map[ind_wtoi, :]
+    cam2wt = turbine_map[ind_wtoi, :] - camera_position
+    camera_angle = math.atan2(cam2wt[1], cam2wt[0])
+    print(camera_angle / math.pi * 180)
 
-        wea_point = WeaPoints(
-            obj_all=obj,
-            obj_housing=obj.children[0],
-            obj_rotor_wrapper=obj.children[0].children[0],
-            obj_rotor_all=obj.children[0].children[0].children[0],
-            obj_rotor_middle=obj.children[0].children[0].children[0].children[0],
-            obj_rotor_tip_1=obj.children[0].children[0].children[0].children[1],
-            obj_rotor_tip_2=tip_2,
-            obj_rotor_tip_3=tip_3,
-            obj_housing_back=obj.children[0].children[1],
-            obj_tower_top=obj.children[1],
-            obj_tower_bottom=obj.children[2],
+    # move and rotating the park so the the camera is at [0,0] and looks up
+    rot_ang = math.pi / 2 - camera_angle
+    turbine_map_new = turbine_map - camera_position
+    turbine_map_new = np.matmul(
+        np.array([[np.cos(rot_ang), -np.sin(rot_ang)], [np.sin(rot_ang), np.cos(rot_ang)]]), turbine_map_new.T
+    )
+    turbine_map_new = turbine_map_new.T
+
+    for i, col in enumerate(collections_selected):
+        col.hide_render = False
+        # create a WTObjectSet object for each wind turbine collection
+        wea_point = WTObjectSet(
+            obj_all=col.objects,
+            tower=next((obj for obj in col.objects if obj.name.startswith("tower")), None),
+            housing=next((obj for obj in col.objects if obj.name.startswith("housing")), None),
+            rotor=next((obj for obj in col.objects if obj.name.startswith("rotor")), None),
+            kp_housing_back=next(
+                (obj for obj in col.objects if obj.name.startswith("kp_housing_back")),
+                None,
+            ),
+            kp_housing_front=next(
+                (obj for obj in col.objects if obj.name.startswith("kp_housing_front")),
+                None,
+            ),
+            kp_tower_top=next(
+                (obj for obj in col.objects if obj.name.startswith("kp_tower_top")),
+                None,
+            ),
+            kp_tower_bottom=next(
+                (obj for obj in col.objects if obj.name.startswith("kp_tower_bottom")),
+                None,
+            ),
+            kp_tip_1=next((obj for obj in col.objects if obj.name.startswith("kp_tip_1")), None),
+            kp_tip_2=next((obj for obj in col.objects if obj.name.startswith("kp_tip_2")), None),
+            kp_tip_3=next((obj for obj in col.objects if obj.name.startswith("kp_tip_3")), None),
         )
-        return_objects.append(wea_point)
 
-    foreground_shaft = random.choice(return_objects)
-    foreground_shaft.obj_all.location[0] = 0
-    foreground_shaft.obj_all.location[1] = 0
+        pos_x = turbine_map_new[i, 0]
+        pos_y = turbine_map_new[i, 1]
+        wea_point.set_xy_position(pos_x, pos_y)
+
+        return_objects.append(wea_point)
 
     return return_objects
 
 
-def randomization_material():
-    """Blender materials are identified by numerical codes. This function selects materials using
-    a shared prefix (consistent across all WEAs) and applies randomization to their visual
-    properties (colors/textures) while preserving structural identifiers.
+def get_camera_horizontal_fov():
+    """Get the horizontal FoV of the camera."""
+    # get the camera horizontal FoV
+    camera_calc = bpy.context.scene.camera
+
+    if camera_calc and camera_calc.type == "CAMERA":
+        camera_data = camera_calc.data
+
+        render = bpy.context.scene.render
+        aspect_ratio = render.resolution_x / render.resolution_y
+
+        horizontal_fov = 2 * math.atan(math.tan(camera_data.angle / 2) * aspect_ratio)
+
+        return math.degrees(horizontal_fov)
+    else:
+        raise ValueError("No active camera in the scene found.")
+
+
+def get_xy_sample(
+    distance_max: int = 100,
+    boundary_left_angle: int = 0,
+    boundary_right_angle: int = 0,
+):
+    """Get a random position for a wind turbine.
+    The position is sampled in cylindrical coordinates, by sampling angle and distance uniformly.
+    The xy-position is then calculated from the cylindrical coordinates.
+
+    Args:
+        distance_max (int, optional): Maximum distance from (0,0) to the wind turbines. Defaults to 100.
+        boundary_left_angle (int, optional): Minimum angle of the left boundary in degrees. The angle is measured from the positive y-axis in counterclockwise direction. Defaults to 0.
+        boundary_right_angle (int, optional): Maximum angle of the right boundary in degrees. The angle is measured from the positive y-axis in clockwise direction. Defaults to 0.
+
+    Returns:
+        tuple: A tuple containing the x and y coordinates of the wind turbine.
     """
-    # Generiere neue Werte für den Base Color
-    value_1 = random.uniform(0.7, 0.8)  # für Helligkeit
-    saturation_1 = random.uniform(0, 0.1)  # für Sättigung
-    hue_1 = random.random()  # für Hue zwischen 0 und 1
-    metallic_1 = random.uniform(0, 0.35)  # für Metallic zwischen 0 und 0,5
-    roughness_1 = random.uniform(0, 0.5)  # für Roughness zwischen 0 und 1
-    for material in bpy.data.materials:
-        # Überprüfe, ob das Material das gewünschte Muster im Namen hat
-        if "191" in material.name:
-            # Auswählen der Base Color Node
-            if material.node_tree:
-                for node in material.node_tree.nodes:
-                    if node.type == "BSDF_PRINCIPLED":
-                        rgb_color = colorsys.hsv_to_rgb(hue_1, saturation_1, value_1)
-                        # Ändere den Wert des Base Color-Eingangs
-                        node.inputs["Base Color"].default_value = (
-                            rgb_color[0],
-                            rgb_color[1],
-                            rgb_color[2],
-                            1.0,
-                        )
-                        # Passe den Metallic-Wert an
-                        node.inputs["Metallic"].default_value = metallic_1
-                        # Passe den Roughness-Wert an
-                        node.inputs["Roughness"].default_value = roughness_1
-                        node.inputs["Emission"].default_value = (0, 0, 0, 1)
+    distance = random.uniform(0, distance_max)
+    angle_deg = random.uniform(0, boundary_left_angle + boundary_right_angle) + 90 - boundary_right_angle
+    angle_rad = math.radians(angle_deg)
 
-        if "204" in material.name:
-            # Auswählen der Base Color Node
-            if material.node_tree:
-                for node in material.node_tree.nodes:
-                    if node.type == "BSDF_PRINCIPLED":
-                        # Generiere neue Werte für den Base Color
-                        value = random.uniform(0.3, 0.7)  # für Helligkeit
-                        saturation = random.uniform(0.8, 1)  # für Sättigung
-                        hue = 1
-                        metallic = random.uniform(
-                            0, 0.5
-                        )  # für Metallic zwischen 0 und 0,5
-                        roughness = random.random()  # für Roughness zwischen 0 und 1
-                        rgb_color = colorsys.hsv_to_rgb(hue, saturation, value)
-                        # Ändere den Wert des Base Color-Eingangs
-                        node.inputs["Base Color"].default_value = (
-                            rgb_color[0],
-                            rgb_color[1],
-                            rgb_color[2],
-                            1.0,
-                        )
-                        # Passe den Metallic-Wert an
-                        node.inputs["Metallic"].default_value = metallic
-                        # Passe den Roughness-Wert an
-                        node.inputs["Roughness"].default_value = roughness
+    return distance * math.cos(angle_rad), distance * math.sin(angle_rad)
 
-        if "225" in material.name:
-            # Auswählen der Base Color Node
-            if material.node_tree:
-                for node in material.node_tree.nodes:
-                    if node.type == "BSDF_PRINCIPLED":
-                        # Generiere neue Werte für den Base Color
-                        value = random.uniform(0.2, 0.7)  # für Helligkeit
-                        saturation = random.uniform(0, 1)  # für Sättigung
-                        hue = 0.167
-                        metallic = random.uniform(
-                            0, 0.5
-                        )  # für Metallic zwischen 0 und 0,5
-                        roughness = random.random()  # für Roughness zwischen 0 und 1
-                        rgb_color = colorsys.hsv_to_rgb(hue, saturation, value)
-                        # Ändere den Wert des Base Color-Eingangs
-                        node.inputs["Base Color"].default_value = (
-                            rgb_color[0],
-                            rgb_color[1],
-                            rgb_color[2],
-                            1.0,
-                        )
-                        # Passe den Metallic-Wert an
-                        node.inputs["Metallic"].default_value = metallic
-                        # Passe den Roughness-Wert an
-                        node.inputs["Roughness"].default_value = roughness
 
-    # nun wird die Dicke aller Bauteiler aller WEA angepasst.
-    shaft_objects = [
-        obj
-        for obj in bpy.data.objects
-        if "shaft" in obj.name.lower()
-        and "shaft_oben" not in obj.name.lower()
-        and "shaft_unten" not in obj.name.lower()
-    ]
-    for obj in shaft_objects:
-        # Überprüfe und entferne vorhandene Solidify-Modifier vom Hauptobjekt
-        for modifier in obj.modifiers:
-            if modifier.type == "SOLIDIFY":
-                obj.modifiers.remove(modifier)
+def position_objects_in_scene(
+    boundary_left_angle: int,
+    boundary_right_angle: int,
+    distance_max: int = 1000,
+    xy_points: List = [],
+    object_distance: int = 100,
+):
+    """Randomly positions the objects collections in the scene.
+    Only objects that start with 'obj_' are considered.
 
-        # Überprüfe und entferne vorhandene Solidify-Modifier vom ersten Kind
-        if obj.children:
-            for modifier in obj.children[0].modifiers:
-                if modifier.type == "SOLIDIFY":
-                    obj.children[0].modifiers.remove(modifier)
+    Args:
+        boundary_left_angle (int, optional): Minimum angle of the left boundary in degrees. The angle is measured from the positive y-axis in counterclockwise direction. Defaults to 0.
+        boundary_right_angle (int, optional): Maximum angle of the right boundary in degrees. The angle is measured from the positive y-axis in clockwise direction. Defaults to 100.
+        distance_max (int, optional): Maximum distance from the center of the scene to the objects. Defaults to 1000.
+    """
 
-            # Überprüfe und entferne vorhandene Solidify-Modifier vom ersten Enkel des ersten Kindes
-            if obj.children[0].children:
-                for modifier in obj.children[0].children[0].modifiers:
-                    if modifier.type == "SOLIDIFY":
-                        obj.children[0].children[0].modifiers.remove(modifier)
+    object_collections = [col for col in bpy.data.collections if col.name.lower().startswith("obj_")]
 
-                # Überprüfe und entferne vorhandene Solidify-Modifier vom ersten Urenkel des ersten Enkels
-                if obj.children[0].children[0].children:
-                    for modifier in obj.children[0].children[0].children[0].modifiers:
-                        if modifier.type == "SOLIDIFY":
-                            obj.children[0].children[0].children[0].modifiers.remove(
-                                modifier
-                            )
+    # get the camera horizontal FoV
+    horizontal_fov_degrees = get_camera_horizontal_fov()
+    if horizontal_fov_degrees / 2 < boundary_left_angle:
+        boundary_left_angle = horizontal_fov_degrees / 2
+    if horizontal_fov_degrees / 2 < boundary_right_angle:
+        boundary_right_angle = horizontal_fov_degrees / 2
 
-    # Füge den Solidify-Modifier zum Hauptobjekt hinzu
-    solidify_modifier = obj.modifiers.new(name="Solidify", type="SOLIDIFY")
-    solidify_modifier.offset = 0
-    solidify_modifier.thickness = random.uniform(0, 1500)
+    for col in object_collections:
+        col.hide_render = False
 
-    solidify_modifier = obj.children[0].modifiers.new(name="Solidify", type="SOLIDIFY")
-    solidify_modifier.offset = 0
-    solidify_modifier.thickness = random.uniform(0, 1500)
+        collision = True
+        counter = 0
+        while collision:
+            collision = False
+            loc_x, loc_y = get_xy_sample(distance_max, boundary_left_angle, boundary_right_angle)
+            for x, y in xy_points:
+                if math.sqrt((x - loc_x) ** 2 + (y - loc_y) ** 2) < object_distance:
+                    collision = True
+                    break
+            if counter > 200:
+                col.hide_render = True
+                print(
+                    "WARNING: Too many tries to place an object inside the given boundary. The object is not visualized now."
+                )
+                break
+            counter += 1
 
-    solidify_modifier = (
-        obj.children[0]
-        .children[0]
-        .children[0]
-        .modifiers.new(name="Solidify", type="SOLIDIFY")
+        for obj in col.objects:
+            if obj.parent is None:
+                obj.location = (loc_x, loc_y, obj.location[2])
+
+
+def generate_wind_turbine_set(
+    number_of_wts: int = 1,
+    centered_wt: bool = True,
+    boundary_left_angle: int = 0,
+    boundary_right_angle: int = 0,
+    min_distance_between_wts: int = 60,
+    max_distance: int = 100,
+):
+    """Position the wind turbines randomly within a specific area. The wind turbines are positioned in the x and y directions.
+
+    Args:
+        number_of_wts (int, optinal): Number of wind turbines to be generated. Defaults to 1.
+        centered_wt (bool, optional): If True, one wind turbines is centered in the camera view. Defaults to True.
+        boundary_left_angle (int, optional): Minimum angle of the left boundary in degrees. The angle is measured from the positive y-axis in counterclockwise direction. Defaults to 0.
+        boundary_right_angle (int, optional): Maximum angle of the right boundary in degrees. The angle is measured from the positive y-axis in clockwise direction. Defaults to 100.
+        min_distance_between_wts (int, optional): Minimum distance between wind turbines. Defaults to 0.
+        max_distance (int, optional): Maximum distance from the center of the scene to the wind turbines. Defaults to 100.
+    """
+
+    def is_in_range(pos_x, pos_y, min_distance_between_wts, xy_placed):
+        """Check if a position is in range of another wind turbine.
+
+        Args:
+            pos_x (float): x-coordinate of the position to check.
+            pos_y (float): y-coordinate of the position to check.
+            min_distance_between_wts (float): Minimum distance between wind turbines.
+            xy_placed (list): List of already placed wind turbines.
+
+        Returns:
+            bool: True if the position is in range of another wind turbine, False otherwise.
+        """
+        for x, y in xy_placed:
+            if math.sqrt((pos_x - x) ** 2 + (pos_y - y) ** 2) < min_distance_between_wts:
+                return True
+        return False
+
+    # get the camera horizontal FoV
+    horizontal_fov_degrees = get_camera_horizontal_fov()
+    if horizontal_fov_degrees / 2 < boundary_left_angle:
+        boundary_left_angle = horizontal_fov_degrees / 2
+    if horizontal_fov_degrees / 2 < boundary_right_angle:
+        boundary_right_angle = horizontal_fov_degrees / 2
+
+    # get all object from the blender scene that start with 'wt_' (wind turbine collections)
+    wt_collections = []
+    for col in bpy.data.collections:
+        col.hide_render = True
+        if col.name.lower().startswith("wt_"):
+            wt_collections.append(col)
+
+    if number_of_wts > len(wt_collections):
+        raise ValueError(
+            f"number_of_wts is larger than the number of wt collections: {number_of_wts} > {len(wt_collections)}"
+        )
+
+    # select a random number of wind turbine collections
+    collections_selected = random.sample(wt_collections, number_of_wts)
+
+    # list of already placed wind turbines
+    xy_placed = []
+    # list of already placed wind turbines as WTObjectSet list
+    return_objects = []
+
+    for i, col in enumerate(collections_selected):
+        # create a WTObjectSet object for each wind turbine collection
+        col.hide_render = False
+        wea_point = WTObjectSet(
+            obj_all=col.objects,
+            tower=next((obj for obj in col.objects if obj.name.startswith("tower")), None),
+            housing=next((obj for obj in col.objects if obj.name.startswith("housing")), None),
+            rotor=next((obj for obj in col.objects if obj.name.startswith("rotor")), None),
+            kp_housing_back=next(
+                (obj for obj in col.objects if obj.name.startswith("kp_housing_back")),
+                None,
+            ),
+            kp_housing_front=next(
+                (obj for obj in col.objects if obj.name.startswith("kp_housing_front")),
+                None,
+            ),
+            kp_tower_top=next(
+                (obj for obj in col.objects if obj.name.startswith("kp_tower_top")),
+                None,
+            ),
+            kp_tower_bottom=next(
+                (obj for obj in col.objects if obj.name.startswith("kp_tower_bottom")),
+                None,
+            ),
+            kp_tip_1=next((obj for obj in col.objects if obj.name.startswith("kp_tip_1")), None),
+            kp_tip_2=next((obj for obj in col.objects if obj.name.startswith("kp_tip_2")), None),
+            kp_tip_3=next((obj for obj in col.objects if obj.name.startswith("kp_tip_3")), None),
+        )
+
+        # get a random position for the wind turbine
+        pos_x, pos_y = 0, 0
+        if not (centered_wt and i == 0):
+            pos_x, pos_y = get_xy_sample(max_distance, boundary_left_angle, boundary_right_angle)
+
+        iterations = 0
+        while is_in_range(pos_x, pos_y, min_distance_between_wts, xy_placed):
+            if iterations >= 100:
+                raise RuntimeError("Could not find valid wind turbine position after 100 attempts")
+            pos_x, pos_y = get_xy_sample(max_distance, boundary_left_angle, boundary_right_angle)
+            iterations += 1
+
+        wea_point.set_xy_position(pos_x, pos_y)
+        xy_placed.append((pos_x, pos_y))
+
+        return_objects.append(wea_point)
+
+    return return_objects, xy_placed
+
+
+def randomization_material_properties(wea_selection: List[WTObjectSet], config: dict):
+    """
+    Randomize the material properties metallic and roughness of the wind turbines (WEAs) from the given list of WTObjectSet objects.
+    The modification is the same for each part of the wind turbine, but different for each wind turbine.
+
+    Args:
+        wea_selection (List[WTObjectSet]): List of WTObjectSet objects.
+        config (dict): Configuration dictionary.
+    """
+
+    metallic = np.clip(
+        sample_distribution(
+            config["METALLIC"]["DISTRIBUTION"],
+            config["METALLIC"]["ARG_1"],
+            config["METALLIC"]["ARG_2"],
+        ),
+        0,
+        1,
     )
-    solidify_modifier.offset = 0
-    solidify_modifier.thickness = random.uniform(0, 1500)
+    roughness = np.clip(
+        sample_distribution(
+            config["ROUGHNESS"]["DISTRIBUTION"],
+            config["ROUGHNESS"]["ARG_1"],
+            config["ROUGHNESS"]["ARG_2"],
+        ),
+        0,
+        1,
+    )
+
+    for wea in wea_selection:
+        for material in wea.rotor.data.materials:
+            material.metallic = metallic
+            material.roughness = roughness
+
+        for material in wea.housing.data.materials:
+            material.metallic = metallic
+            material.roughness = roughness
+
+        for material in wea.tower.data.materials:
+            material.metallic = metallic
+            material.roughness = roughness
 
 
 def add_gaussian_noise(image: np.array, mean=0, sigma=25) -> np.array:
@@ -560,32 +884,50 @@ def add_gaussian_noise(image: np.array, mean=0, sigma=25) -> np.array:
     return noisy_image
 
 
-def create_noise_image(image: np.array, mean=0, sigma=25) -> np.array:
-    """Add Gaussian noise to an image.
+def get_output_paths(pre_path_str: str, base_path: str) -> OutputPaths:
+    """Create and return output directory structure for image generation.
+
+    This function creates a timestamped directory structure within a 'data' subdirectory
+    of the provided base path. The structure includes separate folders for training and
+    validation datasets, each containing subdirectories for images, labels, and label
+    visualizations.
 
     Args:
-        image: Input image (numpy array)
-        mean: Mean of Gaussian distribution
-        sigma: Standard deviation of Gaussian distribution
+        pre_path_str (str): Prefix string to be used in the generated folder name.
+                           This will be combined with a timestamp to create a unique
+                           directory name.
+        base_path (str): Base directory path where the 'data' folder and subsequent
+                        directory structure will be created.
 
     Returns:
-        Noisy image (numpy array)
+        tuple: A tuple containing:
+            - str: Absolute path to the newly created root directory
+            - OutputPaths: TypedDict containing training and validation paths with
+                          subdirectories for:
+                          - path_images: Directory for storing image files
+                          - path_images_keypoints: Directory for label visualization files
+                          - path_keypoints: Directory for label/annotation files
+
+    Directory Structure Created:
+        base_path/
+        └── data/
+            └── {pre_path_str}_{timestamp}/
+                ├── images/
+                │   ├── train/
+                │   └── val/
+                ├── label_vis/
+                │   ├── train/
+                │   └── val/
+                └── labels/
+                    ├── train/
+                    └── val/
+
+    Raises:
+        ValueError: If a directory with the generated name already exists.
+
     """
 
-    # Generate Gaussian noise
-    noise = np.random.uniform(0, 255, image.shape).astype(np.float32)
-
-    return noise
-
-
-def get_output_paths(pre_path_str: str, base_path: str) -> OutputPaths:
-    # Function to get and create ourput dir structure for the image generation.
-    # The folder structure is defined by OutputPaths.
-    # The path structure get created inside a 'data' dir from base_path.
-
-    new_folder_name_uuid = (
-        pre_path_str + "_" + str(datetime.datetime.now().strftime("%Y-%m-%d_%H:%M:%S"))
-    )
+    new_folder_name_uuid = pre_path_str + "_" + str(datetime.datetime.now().strftime("%Y-%m-%d_%H:%M:%S"))
     new_folder_path_abs = os.path.join(base_path, "data/" + new_folder_name_uuid)
 
     path_images = os.path.join(new_folder_path_abs, "images")
@@ -614,7 +956,7 @@ def get_output_paths(pre_path_str: str, base_path: str) -> OutputPaths:
     else:
         raise ValueError("Pathname already exists.")
 
-    return new_folder_path_abs,OutputPaths(
+    return new_folder_path_abs, OutputPaths(
         training=OutputPathsDict(
             path_images=path_images_train,
             path_images_keypoints=path_images_keypoints_train,
@@ -626,3 +968,84 @@ def get_output_paths(pre_path_str: str, base_path: str) -> OutputPaths:
             path_keypoints=path_keypoints_test,
         ),
     )
+
+
+def get_windturbines(min_lat, min_lon, max_lat, max_lon, timeout=30):
+    """
+    Query wind turbines from OpenStreetMap using the Overpass API.
+
+    Args:
+        min_lat (float): Minimum latitude of the bounding box
+        min_lon (float): Minimum longitude of the bounding box
+        max_lat (float): Maximum latitude of the bounding box
+        max_lon (float): Maximum longitude of the bounding box
+        timeout (int): Query timeout in seconds (default: 30)
+
+    Returns:
+        dict: JSON response from the Overpass API
+    """
+
+    # Overpass API endpoint
+    url = "https://overpass-api.de/api/interpreter"
+
+    # Build the Overpass QL query with variable coordinates
+    query = f"""
+    [out:json][timeout:{timeout}];
+    (
+        node['generator:source'=wind]({min_lat},{min_lon},{max_lat},{max_lon});
+        way['generator:source'=wind]({min_lat},{min_lon},{max_lat},{max_lon});
+        relation['generator:source'=wind]({min_lat},{min_lon},{max_lat},{max_lon});
+    );
+    out body geom;
+    """
+
+    # Parameters for the GET request
+    params = {"data": query}
+
+    try:
+        # Make the GET request
+        response = requests.get(url, params=params)
+        response.raise_for_status()  # Raise an exception for bad status codes
+
+        # Return the JSON response
+        return response.json()
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error making request: {e}")
+        return None
+    except json.JSONDecodeError as e:
+        print(f"Error parsing JSON response: {e}")
+        return None
+
+
+def get_relative_wea_map(lat: int, lon: int, padding: int):
+    lat_offset = padding / 111
+    lon_offset = padding / (111 * math.cos(math.radians(lat)))
+
+    min_lat = lat - lat_offset
+    max_lat = lat + lat_offset
+    min_lon = lon - lon_offset
+    max_lon = lon + lon_offset
+
+    print(f"Querying wind turbines in bounding box:")
+    print(f"  Min: {min_lat}, {min_lon}")
+    print(f"  Max: {max_lat}, {max_lon}")
+
+    # Get wind turbine data
+    data = get_windturbines(min_lat, min_lon, max_lat, max_lon)
+
+    positions = []
+    if data:
+        print(f"\nFound {len(data.get('elements', []))} wind turbine elements")
+        if len(data.get("elements", [])) > 0:
+            first_wea = data.get("elements", [])[0]
+            x_ref, y_ref = first_wea["lat"], first_wea["lon"]
+
+            for element in data.get("elements", []):
+                if "lat" in element and "lon" in element:
+                    positions.append(
+                        [111 * (element["lat"] - x_ref), (111 * math.cos(math.radians(lat))) * (element["lon"] - y_ref)]
+                    )
+                else:
+                    print(f"No lat and lon found: {element}")
+    return positions
