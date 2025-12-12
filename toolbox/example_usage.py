@@ -1,6 +1,5 @@
 import blenderproc as bproc
 import os
-import sys
 
 import wind_turbine_synthetic_vision.helper as helper
 from wind_turbine_synthetic_vision.generator import DatasetGenerator
