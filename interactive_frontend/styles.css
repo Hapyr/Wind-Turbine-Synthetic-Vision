@@ -49,6 +49,9 @@ body {
     border-radius: 50px;
     z-index: 100;
     transition: opacity 0.3s;
+    max-width: 100%;
+    flex-wrap: wrap;
+    justify-content: center;
 }
 
 body.fullscreen #controls {
@@ -91,7 +94,6 @@ body.fullscreen #controls:hover {
     display: flex;
     gap: 15px;
     padding-left: 15px;
-    border-left: 1px solid rgba(255, 255, 255, 0.3);
     font-size: 13px;
     font-family: 'Courier New', monospace;
 }
@@ -103,7 +105,6 @@ body.fullscreen #controls:hover {
 }
 
 #status {
-    position: fixed;
     top: 20px;
     right: 20px;
     padding: 10px 20px;
@@ -133,8 +134,17 @@ body.fullscreen #controls:hover {
     border-radius: 20px;
     border: 1px solid rgba(255, 255, 255, 0.1);
     z-index: 200;
-    max-width: 500px;
     text-align: center;
+    display: inline;
+    max-width: 500px;
+    width: 95%;
+}
+
+@media only screen and (max-width: 600px) {
+    .upload-panel {
+        background-color: lightblue;
+        max-width: 800px;
+    }
 }
 
 .upload-panel.hidden {
@@ -338,4 +348,3 @@ body.fullscreen #controls {
 .close-settings-btn:active {
     transform: translateY(0);
 }
-

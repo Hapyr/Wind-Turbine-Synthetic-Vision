@@ -1,113 +1,122 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Wind Turbine Detection</title>
     <link rel="stylesheet" href="styles.css">
 </head>
+
 <body>
-    <div id="container">
-        <video id="webcam" autoplay playsinline></video>
-        <canvas id="overlay"></canvas>
-    </div>
-    
-    <div id="controls">
-        <button id="flipCamera" class="control-btn">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/>
-            </svg>
-            Flip Camera
-        </button>
-        <!-- <button id="toggleFullscreen" class="control-btn">
+    <div id="main_container">
+
+        <div id="container">
+            <video id="webcam" autoplay playsinline></video>
+            <canvas id="overlay"></canvas>
+        </div>
+
+        <div id="controls">
+            <button id="flipCamera" class="control-btn">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16" />
+                </svg>
+                Flip Camera
+            </button>
+            <!-- <button id="toggleFullscreen" class="control-btn">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
             </svg>
             Fullscreen
         </button> -->
-        <button id="toggleSettings" class="control-btn">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="3"></circle>
-                <path d="M12 1v6m0 6v6m5.656-16.97l-4.242 4.243m0 7.071l-4.242 4.243M23 12h-6m-6 0H1m16.97 5.656l-4.243-4.242m0-7.071L18.97 1.343"></path>
-            </svg>
-            Performance
-        </button>
-        <div id="stats">
-            <span id="fps">FPS: --</span>
-            <span id="modelFps">Model FPS: --</span>
-            <span id="detections">Detections: 0</span>
-        </div>
-        <div id="status">Loading model...</div>
-    </div>
-
-    <div id="settingsPanel" class="settings-panel hidden">
-        <h3>Performance Settings</h3>
-        <p style="font-size: 12px; color: #888; margin-bottom: 15px;">
-            Adjust these settings to balance performance vs quality
-        </p>
-        
-        <div class="setting-group">
-            <label for="inputResolution">Input Resolution</label>
-            <select id="inputResolution">
-                <option value="320,240">320×240 (Fastest)</option>
-                <option value="416,312">416×312 (Fast)</option>
-                <option value="640,480" selected>640×480 (Balanced)</option>
-                <option value="800,600">800×600 (Quality)</option>
-            </select>
-        </div>
-        
-        <div class="setting-group">
-            <label for="inferenceRate">Inference Rate</label>
-            <select id="inferenceRate">
-                <option value="5">5 FPS (Fastest)</option>
-                <option value="10">10 FPS (Fast)</option>
-                <option value="15" selected>15 FPS (Balanced)</option>
-                <option value="20">20 FPS (Smooth)</option>
-                <option value="30">30 FPS (Max Quality)</option>
-            </select>
-        </div>
-        
-        <div class="setting-group">
-            <label for="skipFrames">Frame Skip</label>
-            <select id="skipFrames">
-                <option value="1">Every Frame (Slowest)</option>
-                <option value="2" selected>Every 2nd Frame</option>
-                <option value="3">Every 3rd Frame</option>
-                <option value="4">Every 4th Frame (Fastest)</option>
-            </select>
-        </div>
-        
-        <button id="applySettings" class="apply-settings-btn">Apply Settings</button>
-        <button id="closeSettings" class="close-settings-btn">Close</button>
-    </div>
-
-    <div id="modelUpload" class="upload-panel">
-        <h2>Load Wind Turbine Detection Model</h2>
-        
-        <div style="margin-bottom: 20px;">
-            <button id="loadDefaultModel" class="default-model-btn">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 8px;">
-                    <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+            <button id="toggleSettings" class="control-btn">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path
+                        d="M12 1v6m0 6v6m5.656-16.97l-4.242 4.243m0 7.071l-4.242 4.243M23 12h-6m-6 0H1m16.97 5.656l-4.243-4.242m0-7.071L18.97 1.343">
+                    </path>
                 </svg>
-                Load Default Model (model-s)
+                Performance
             </button>
+            <div id="stats">
+                <span id="fps">FPS: --</span>
+                <span id="modelFps">Model FPS: --</span>
+                <span id="detections">Detections: 0</span>
+            </div>
+            <div id="status">Loading model...</div>
         </div>
-        
-        <div style="text-align: center; margin: 15px 0; color: #888;">— or —</div>
-        
-        <p>Upload your own ONNX model file (.onnx)</p>
-        <input type="file" id="modelFile" accept=".onnx">
-        <div id="uploadStatus"></div>
-        <!-- <details>
+
+        <div id="settingsPanel" class="settings-panel hidden">
+            <h3>Performance Settings</h3>
+            <p style="font-size: 12px; color: #888; margin-bottom: 15px;">
+                Adjust these settings to balance performance vs quality
+            </p>
+
+            <div class="setting-group">
+                <label for="inputResolution">Input Resolution</label>
+                <select id="inputResolution">
+                    <option value="320,240">320×240 (Fastest)</option>
+                    <option value="416,312">416×312 (Fast)</option>
+                    <option value="640,480" selected>640×480 (Balanced)</option>
+                    <option value="800,600">800×600 (Quality)</option>
+                </select>
+            </div>
+
+            <div class="setting-group">
+                <label for="inferenceRate">Inference Rate</label>
+                <select id="inferenceRate">
+                    <option value="5">5 FPS (Fastest)</option>
+                    <option value="10">10 FPS (Fast)</option>
+                    <option value="15" selected>15 FPS (Balanced)</option>
+                    <option value="20">20 FPS (Smooth)</option>
+                    <option value="30">30 FPS (Max Quality)</option>
+                </select>
+            </div>
+
+            <div class="setting-group">
+                <label for="skipFrames">Frame Skip</label>
+                <select id="skipFrames">
+                    <option value="1">Every Frame (Slowest)</option>
+                    <option value="2" selected>Every 2nd Frame</option>
+                    <option value="3">Every 3rd Frame</option>
+                    <option value="4">Every 4th Frame (Fastest)</option>
+                </select>
+            </div>
+
+            <button id="applySettings" class="apply-settings-btn">Apply Settings</button>
+            <button id="closeSettings" class="close-settings-btn">Close</button>
+        </div>
+
+        <div id="modelUpload" class="upload-panel">
+            <h2>Load Wind Turbine Detection Model</h2>
+
+            <div style="margin-bottom: 20px;">
+                <button id="loadDefaultModel" class="default-model-btn">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        style="vertical-align: middle; margin-right: 8px;">
+                        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+                    </svg>
+                    Load Default Model (model-s)
+                </button>
+            </div>
+
+            <div style="text-align: center; margin: 15px 0; color: #888;">— or —</div>
+
+            <p>Upload your own ONNX model file (.onnx)</p>
+            <input type="file" id="modelFile" accept=".onnx">
+            <div id="uploadStatus"></div>
+            <!-- <details>
             <summary>Don't have an ONNX model?</summary>
             <p>Convert your PyTorch .pt model to ONNX format using the provided Python script:</p>
             <code>python convert_to_onnx.py --model your_model.pt --output model.onnx</code>
         </details> -->
+        </div>
+
+        <!-- Use regular ONNX Runtime (WASM only, no WebGPU) -->
+        <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.16.3/dist/ort.min.js"></script>
+        <script src="app.js"></script>
     </div>
 
-    <!-- Use regular ONNX Runtime (WASM only, no WebGPU) -->
-    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.16.3/dist/ort.min.js"></script>
-    <script src="app.js"></script>
 </body>
-</html>
 
+</html>
