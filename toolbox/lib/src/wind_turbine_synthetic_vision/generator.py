@@ -51,6 +51,7 @@ class DatasetGenerator:
         self.output_path_root, self.output_paths = output_paths
         self.background_images_path_abs = background_images_path_abs
         self.random_background = self.config["RANDOM_BACKGROUND"]
+        self.random_objects = self.config["RANDOM_OBJECTS"]
 
         bproc.renderer.set_render_devices("OPTIX")
         bproc.init()
@@ -110,13 +111,13 @@ class DatasetGenerator:
                 max_distance=self.PLACEMENT["MAX_DISTANCE"],
             )
 
-            if not self.random_background:
+            if self.random_objects:
                 helper.position_objects_in_scene(
                     self.PLACEMENT["BOUNDARY_LEFT_ANGLE"],
                     self.PLACEMENT["BOUNDARY_RIGHT_ANGLE"],
                     1000,
                     xy_weas_placed,
-                    self.PLACEMENT["MIN_DISTANCE_BETWEEN_WTS"],
+                    self.PLACEMENT["MIN_DISTANCE_BETWEEN_WTS"]
                 )
 
             helper.randomization_material_properties(wea_selection, self.MATERIAL)
@@ -166,7 +167,7 @@ class DatasetGenerator:
             helper.set_category_ids(wea_selection)
 
             bproc.renderer.set_output_format(enable_transparency=self.random_background)
-            bproc.renderer.set_noise_threshold(0.01)
+            bproc.renderer.set_noise_threshold(0.05)
 
             # render RGB image
             data = bproc.renderer.render()
@@ -247,8 +248,9 @@ class DatasetGenerator:
             helper.randomize_sky_texture(self.sky_texture_node, self.SKY_TEXTURE)
 
             if self.turbine_map is None:
-                self.turbine_map = np.array(helper.get_relative_wea_map(54.34, 7.64, 9)) * 500
+                self.turbine_map = np.array(helper.get_relative_wea_map(54.34, 7.64, 10)) * 800
                 # Create scatter plot of turbine positions
+                print(self.turbine_map)
                 plt.figure(figsize=(8, 8))
                 plt.scatter(self.turbine_map[:, 0], self.turbine_map[:, 1], c="blue", alpha=0.6)
                 plt.title("Wind Turbine Positions")
@@ -268,6 +270,8 @@ class DatasetGenerator:
                 min_distance_cam_wt=self.PLACEMENT["MIN_DIST_CAM_WT"],
                 turbine_map=self.turbine_map,
             )
+
+            helper.position_objects_in_scene(90, 90, 10000, self.turbine_map, 500)
 
             helper.randomization_material_properties(wea_selection, self.MATERIAL)
 
@@ -324,7 +328,7 @@ class DatasetGenerator:
             helper.set_category_ids(wea_selection)
 
             bproc.renderer.set_output_format(enable_transparency=self.random_background)
-            bproc.renderer.set_noise_threshold(0.01)
+            bproc.renderer.set_noise_threshold(0.00001)
 
             # render RGB image
             data = bproc.renderer.render()

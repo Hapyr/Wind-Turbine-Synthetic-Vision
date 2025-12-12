@@ -1,6 +1,7 @@
 # Wind Turbine Synthetic Vision Dataset Generator Configuration
 
 RANDOM_BACKGROUND: true
+RANDOM_OBJECTS: false
 
 # Parameters for placement of wind turbines
 PLACEMENT:

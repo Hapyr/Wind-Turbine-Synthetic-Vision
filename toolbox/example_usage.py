@@ -7,8 +7,8 @@ from wind_turbine_synthetic_vision.generator import DatasetGenerator
 
 output_path_root, output_paths = helper.get_output_paths("example", os.path.dirname(__file__))
 
-blender_scene_path = os.path.join(os.path.dirname(__file__), "./scene/100_wt_set.blend")
-background_images_path = os.path.join(os.path.dirname(__file__),"background")
+blender_scene_path = os.path.join(os.path.dirname(__file__), "./scene/example_100_wts.blend")
+background_images_path = os.path.join(os.path.dirname(__file__), "background")
 config_file_path = os.path.join(os.path.dirname(__file__), "example_config.yaml")
 
 generator = DatasetGenerator(

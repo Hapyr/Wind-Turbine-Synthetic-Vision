@@ -123,6 +123,7 @@ For the correct indentation and example values of all parameters, please refer t
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `RANDOM_BACKGROUND` | boolean | Use random background images instead of blender scene elements (e.g. sky or ocean)  |
+| `RANDOM_OBJECTS` | boolean | In addition to wind turbines, objects can be rendered and randomly positioned. Only objects that begin with “obj_” in the Blender scene are taken into account. |
 ---
 
 
