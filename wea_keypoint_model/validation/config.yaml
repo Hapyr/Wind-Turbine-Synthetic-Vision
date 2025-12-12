@@ -1,7 +1,7 @@
 #Data
-path: /home/jakob/Dokumente/IRT/modele_final/val_data
-train: /home/jakob/Dokumente/IRT/modele_final/val_data/dataset
-val: /home/jakob/Dokumente/IRT/modele_final/val_data/dataset
+path: <path to dataset dir>
+train: <path to train dataset>
+val: <path to validation dataset>
 
 #keypoints
 kpt_shape: [7,2] #number of keypoints, number of dim
