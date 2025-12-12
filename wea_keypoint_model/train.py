@@ -25,7 +25,7 @@ torch.cuda.empty_cache()
 
 config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "config_train.yaml"))
 
-args = dict(model="yolo11s-pose.pt", data=config_path, epochs=150)
+args = dict(model="pretrained/yolo11s-pose.pt", data=config_path, epochs=150)
 trainer = PoseTrainer(overrides=args)
 
 trainer.train()
