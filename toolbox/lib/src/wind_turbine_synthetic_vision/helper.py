@@ -562,7 +562,6 @@ def generate_wind_turbine_set_from_map(
         ) + turbine_map[ind_wtoi, :]
     cam2wt = turbine_map[ind_wtoi, :] - camera_position
     camera_angle = math.atan2(cam2wt[1], cam2wt[0])
-    print(camera_angle / math.pi * 180)
 
     # move and rotating the park so the the camera is at [0,0] and looks up
     rot_ang = math.pi / 2 - camera_angle

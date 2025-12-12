@@ -106,12 +106,9 @@ We provide an example file `example_wt_set.blend` to show the required naming co
 As mentioned previously, wind turbines can be rendered and placed either on a variety of background images or on a rendered ocean back ground. The background images must be stored in the `background` folder.
 A script (`background_dataset_download.sh`) is provided to download a set of background images from a kaggle dataset. This download serves only as suggestion and is not mandatory for the functionality of the toolbox. If a random background should be used or the ocean should be rendered as the background can be defined with the configuration file when "RANDOM_BACKGROUND" is set to either "True" or "False".
 
-## Generate from MAP
+## Positioning of wind turbines based on OpenStreetMap (OSM) data 
 
-As mentioned briefly, the toolbox can either place the wind turbines randomly in front of the camera or place the camera randomly within the boundaries of a provided wind park map. 
-TODO1: add map, excel file and folder and describe here.
-As shown in the "example_dev.py" file, the toolbox uses random backgrounds with the "generate()" command, and it renders the ocean background when "generate_from_map()" command is used. 
-
+As previously mentioned, the toolbox offers flexible placement strategies. It can generate wind turbines randomly in front of the camera, or position them based on real-world data. Instead of relying on a static map file, users can define a specific area of interest by providing latitude and longitude coordinates with a search radius. The system then utilizes OpenStreetMap data to identify and replicate the wind park configuration found within that zone. The parameters for this feature are described below.
 
 ## Configuration Parameters
 Configuration file for generating synthetic wind turbine datasets using Blender. Controls scene setup, camera parameters, and post-processing effects.
@@ -127,16 +124,27 @@ For the correct indentation and example values of all parameters, please refer t
 ---
 
 
-### Wind Turbine Placement HERE PLEASE ALSO ADD THE VARIABLES USED FOR FROM THE MPA FUNCTION TODO2
+### Wind Turbine Placement 
 `PLACEMENT`
 | Sub-Parameter | Type | Description |
 |-----------|------|-------------|
-| `NUMBER_OF_WTS` | integer | Number of wind turbines in scene |
+| `NUMBER_OF_WTS` | integer | Number of wind turbines in scene. The blender scene must contain at least this number of wind turbines according to the naming convention described above. |
 | `CENTERED_WT` | boolean | If true, one wind turbine is placed at (0,0) |
 | `BOUNDARY_LEFT_ANGLE` | integer | Left viewing boundary (degrees from +Y axis) |
 | `BOUNDARY_RIGHT_ANGLE` | integer | Right viewing boundary (degrees from +Y axis) | TODO3 explain what this means
 | `MIN_DISTANCE_BETWEEN_WTS` | integer | Minimum distance between turbines |
 | `MAX_DISTANCE` | integer | Maximum distance from (0,0) | TODO EXOLAIN MORE
+---
+
+### Positioning of wind turbines based on OpenStreetMap (OSM) data 
+`OSM_PARAMETER`
+| Sub-Parameter | Type | Description |
+|-----------|------|-------------|
+| `POSITIONS_FROM_OSM` | boolean | Use coordinates from OpenStreetMap for positioning wind turbines. |
+| `LATITUDE` | float | Latitude for the area in which wind turbines are to be searched for on OSM.  |
+| `LONGITUDE` | float | Longitude for the area in which wind turbines are to be searched for on OSM.  |
+| `RADIUS` | integer | Radius for the area in which wind turbines are to be searched for on OSM. |
+| `GENERATE_MAP_IMAGE` | boolean | Whether an image should be created with the visualization of the wind turbines found. |
 ---
 
 ### Housing Rotation

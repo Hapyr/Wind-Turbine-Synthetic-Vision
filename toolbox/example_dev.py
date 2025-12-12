@@ -7,14 +7,13 @@ try:
     import wind_turbine_synthetic_vision.helper as helper
     from wind_turbine_synthetic_vision.generator import DatasetGenerator
 except ImportError as e:
-    print(f'No Import: {e}')
+    print(f"No Import: {e}")
 
-generate_from_map = False
 
 output_path_root, output_paths = helper.get_output_paths("example", os.path.dirname(__file__))
 
 blender_scene_path = os.path.join(os.path.dirname(__file__), "./scene/example_100_wts.blend")
-background_images_path = os.path.join(os.path.dirname(__file__),"background")
+background_images_path = os.path.join(os.path.dirname(__file__), "background")
 config_file_path = os.path.join(os.path.dirname(__file__), "example_config.yaml")
 
 generator = DatasetGenerator(
@@ -25,8 +24,4 @@ generator = DatasetGenerator(
     config_file_path=config_file_path,
 )
 
-if (generate_from_map == True):
-    generator.generate_from_map()
-else:
-    generator.generate()
-    
+generator.generate()

@@ -45,6 +45,7 @@ class DatasetGenerator:
         self.POSTPROCESSING = self.config["POSTPROCESSING"]
         self.SKY_TEXTURE = self.config["SKY_TEXTURE"]
         self.MATERIAL = self.config["MATERIAL"]
+        self.OSM_PARAMETER = self.config["OSM_PARAMETER"]
 
         self.path_scene = yolo_scene_file_path_abs
         self.number_images = number_images
@@ -71,6 +72,22 @@ class DatasetGenerator:
 
         self.color_codes = color_codes or helper.default_color_codes
         self.turbine_map = None
+
+        if self.OSM_PARAMETER["POSITIONS_FROM_OSM"]:
+            print(
+                f"Load wind turbine positions from OSM within a radius of {self.OSM_PARAMETER['RADIUS']}km at positions (lat, lon) {self.OSM_PARAMETER['LATITUDE']},{self.OSM_PARAMETER['LONGITUDE']}."
+            )
+            self.turbine_map = np.array(helper.get_relative_wea_map(self.OSM_PARAMETER['LATITUDE'], self.OSM_PARAMETER['LONGITUDE'], self.OSM_PARAMETER['RADIUS'])) * 800
+            
+            if self.OSM_PARAMETER["GENERATE_MAP_IMAGE"]:
+                plt.figure(figsize=(8, 8))
+                plt.scatter(self.turbine_map[:, 0], self.turbine_map[:, 1], c="blue", alpha=0.6)
+                plt.title("Wind Turbine Positions")
+                plt.xlabel("X Position (m)")
+                plt.ylabel("Y Position (m)")
+                plt.grid(True)
+                plt.savefig(os.path.join(self.output_path_root, "turbine_positions.png"))
+                plt.close()
 
         self.sky_texture_node = None
         for n in bpy.data.worlds["World"].node_tree.nodes:
@@ -102,14 +119,27 @@ class DatasetGenerator:
                 housing_height=self.WT_PARAMETERS["HOUSING_HEIGHT"],
             )
 
-            wea_selection, xy_weas_placed = helper.generate_wind_turbine_set(
-                number_of_wts=self.PLACEMENT["NUMBER_OF_WTS"],
-                centered_wt=self.PLACEMENT["CENTERED_WT"],
-                boundary_left_angle=self.PLACEMENT["BOUNDARY_LEFT_ANGLE"],
-                boundary_right_angle=self.PLACEMENT["BOUNDARY_RIGHT_ANGLE"],
-                min_distance_between_wts=self.PLACEMENT["MIN_DISTANCE_BETWEEN_WTS"],
-                max_distance=self.PLACEMENT["MAX_DISTANCE"],
-            )
+            if self.turbine_map is None:
+                wea_selection, xy_weas_placed = helper.generate_wind_turbine_set(
+                    number_of_wts=self.PLACEMENT["NUMBER_OF_WTS"],
+                    centered_wt=self.PLACEMENT["CENTERED_WT"],
+                    boundary_left_angle=self.PLACEMENT["BOUNDARY_LEFT_ANGLE"],
+                    boundary_right_angle=self.PLACEMENT["BOUNDARY_RIGHT_ANGLE"],
+                    min_distance_between_wts=self.PLACEMENT["MIN_DISTANCE_BETWEEN_WTS"],
+                    max_distance=self.PLACEMENT["MAX_DISTANCE"],
+                )
+            else:
+                wea_selection = helper.generate_wind_turbine_set_from_map(
+                    centered_wt=self.PLACEMENT["CENTERED_WT"],
+                    boundary_left_angle=self.PLACEMENT["BOUNDARY_LEFT_ANGLE"],
+                    boundary_right_angle=self.PLACEMENT["BOUNDARY_RIGHT_ANGLE"],
+                    min_distance_between_wts=self.PLACEMENT["MIN_DISTANCE_BETWEEN_WTS"],
+                    max_distance=self.PLACEMENT["MAX_DISTANCE"],
+                    expnsn_ref=self.PLACEMENT["EXPANSION_REF"],
+                    min_distance_cam_wt=self.PLACEMENT["MIN_DIST_CAM_WT"],
+                    turbine_map=self.turbine_map,
+                )
+                xy_weas_placed = self.turbine_map
 
             if self.random_objects:
                 helper.position_objects_in_scene(
@@ -117,7 +147,7 @@ class DatasetGenerator:
                     self.PLACEMENT["BOUNDARY_RIGHT_ANGLE"],
                     1000,
                     xy_weas_placed,
-                    self.PLACEMENT["MIN_DISTANCE_BETWEEN_WTS"]
+                    self.PLACEMENT["MIN_DISTANCE_BETWEEN_WTS"],
                 )
 
             helper.randomization_material_properties(wea_selection, self.MATERIAL)
@@ -168,167 +198,6 @@ class DatasetGenerator:
 
             bproc.renderer.set_output_format(enable_transparency=self.random_background)
             bproc.renderer.set_noise_threshold(0.05)
-
-            # render RGB image
-            data = bproc.renderer.render()
-
-            # foreground to pil image
-            foreground_img = Image.fromarray(data["colors"][0]).convert("RGBA")
-
-            # apply random hue shift to foreground
-            if random.random() < self.POSTPROCESSING["HUE_SHIFT"]["THRESHOLD_FORGROUND"]:
-                foreground_img = helper.shift_hue_random(foreground_img, self.POSTPROCESSING["HUE_SHIFT"])
-
-            scene_render_image = None
-            if self.random_background:
-                # randomly select a background image from the background folder
-                background_img = os.path.join(
-                    self.background_images_path_abs,
-                    random.choice(os.listdir(self.background_images_path_abs)),
-                )
-                background_img = Image.open(background_img).convert("RGBA")
-                background_img = background_img.resize((self.CAMERA["X_RES"], self.CAMERA["Y_RES"]))
-
-                # replace the background image with a random noise image
-                if random.random() < self.POSTPROCESSING["NOISE_BACKGROUND_THRESHOLD"]:
-                    background_img = np.random.uniform(0, 256, (self.CAMERA["X_RES"], self.CAMERA["Y_RES"], 3)).astype(
-                        np.uint8
-                    )
-                    background_img = Image.fromarray(background_img).convert("RGBA")
-                    background_img = background_img.resize((self.CAMERA["X_RES"], self.CAMERA["Y_RES"]))
-
-                # apply random hue shift to background
-                if random.random() < self.POSTPROCESSING["HUE_SHIFT"]["THRESHOLD_BACKGROUND"]:
-                    background_img = helper.shift_hue_random(background_img, self.POSTPROCESSING["HUE_SHIFT"])
-
-                # paste foreground on background
-                background_img.paste(foreground_img, mask=foreground_img)
-                scene_render_image = np.array(background_img)
-            else:
-                scene_render_image = np.array(foreground_img)
-
-            assert scene_render_image is not None, "Scene render image is None"
-
-            # add random noise add some random level
-            if random.random() < self.POSTPROCESSING["GAUSSIAN_NOISE_ARTEFACT"]["THRESHOLD"]:
-                sigma = random.randint(1, self.POSTPROCESSING["GAUSSIAN_NOISE_ARTEFACT"]["SIGMA_MAX"])
-                scene_render_image = helper.add_gaussian_noise(scene_render_image, sigma=sigma)
-
-            # save image with low JPEG quality, random compression quality between 1 and 100
-            if random.random() < self.POSTPROCESSING["COMPRESSION"]["THRESHOLD"]:
-                compression_quality = random.randint(
-                    self.POSTPROCESSING["COMPRESSION"]["QUALITY_MIN"],
-                    self.POSTPROCESSING["COMPRESSION"]["QUALITY_MAX"],
-                )
-                _, encoded_img = cv2.imencode(
-                    ".jpg",
-                    scene_render_image,
-                    [cv2.IMWRITE_JPEG_QUALITY, compression_quality],
-                )
-                scene_render_image = cv2.imdecode(encoded_img, cv2.IMREAD_COLOR)
-
-            # save the image and the keypoints
-            cv2.imwrite(path_image, cv2.cvtColor(scene_render_image, cv2.COLOR_RGBA2BGRA))
-            self.draw_keypoints(keypoints, path_image, path_image_keypoints, self.color_codes)
-
-    def generate_from_map(self, outputpaths: helper.OutputPaths = None):
-        output_paths = outputpaths or self.output_paths
-
-        # save the config file in the output folder
-        with open(os.path.join(self.output_path_root, "config.yaml"), "w") as f:
-            yaml.dump(self.config, f)
-
-        for i in range(self.number_images):
-            print(f"Start image genration {i + 1}/{self.number_images}")
-            bproc.utility.reset_keyframes()
-
-            # create folder structure to save the images, keypoints visualizations and the keypoint text file
-            path_image, path_keypoints, path_image_keypoints = self.generate_folder_structure(output_paths, i)
-
-            helper.randomize_sky_texture(self.sky_texture_node, self.SKY_TEXTURE)
-
-            if self.turbine_map is None:
-                self.turbine_map = np.array(helper.get_relative_wea_map(54.34, 7.64, 10)) * 800
-                # Create scatter plot of turbine positions
-                print(self.turbine_map)
-                plt.figure(figsize=(8, 8))
-                plt.scatter(self.turbine_map[:, 0], self.turbine_map[:, 1], c="blue", alpha=0.6)
-                plt.title("Wind Turbine Positions")
-                plt.xlabel("X Position (m)")
-                plt.ylabel("Y Position (m)")
-                plt.grid(True)
-                plt.savefig(os.path.join(self.output_path_root, "turbine_positions.png"))
-                plt.close()
-
-            wea_selection = helper.generate_wind_turbine_set_from_map(
-                centered_wt=self.PLACEMENT["CENTERED_WT"],
-                boundary_left_angle=self.PLACEMENT["BOUNDARY_LEFT_ANGLE"],
-                boundary_right_angle=self.PLACEMENT["BOUNDARY_RIGHT_ANGLE"],
-                min_distance_between_wts=self.PLACEMENT["MIN_DISTANCE_BETWEEN_WTS"],
-                max_distance=self.PLACEMENT["MAX_DISTANCE"],
-                expnsn_ref=self.PLACEMENT["EXPANSION_REF"],
-                min_distance_cam_wt=self.PLACEMENT["MIN_DIST_CAM_WT"],
-                turbine_map=self.turbine_map,
-            )
-
-            helper.position_objects_in_scene(90, 90, 10000, self.turbine_map, 500)
-
-            helper.randomization_material_properties(wea_selection, self.MATERIAL)
-
-            helper.rotate_housing(
-                wea_selection,
-                mean_angle=self.HOUSING_ROTATION["MEAN"],
-                std_deviation=self.HOUSING_ROTATION["STD_DEV"],
-                normal_distributed=self.HOUSING_ROTATION["NORMAL_DISTRIBUTED_SET"],
-                fixed=self.HOUSING_ROTATION["FIXED"],
-                min_angle=self.HOUSING_ROTATION["ROTATION_ANGLE_HOUSING_MIN"],
-                max_angle=self.HOUSING_ROTATION["ROTATION_ANGLE_HOUSING_MAX"],
-            )
-
-            helper.rotate_rotor(
-                wea_selection,
-                fixed=self.ROTOR_ROTATION["FIXED"],
-                min_angle=self.ROTOR_ROTATION["ROTATION_ANGLE_ROTOR_MIN"],
-                max_angle=self.ROTOR_ROTATION["ROTATION_ANGLE_ROTOR_MAX"],
-            )
-
-            scaling_factors = helper.scale_shaft(
-                wea_selection,
-                scale_random=self.WT_PARAMETERS["RANDOMIZE_SHAFT_SCALING_FACTOR"],
-                scaling_factor_min=self.WT_PARAMETERS["SHAFT_SCALING_FACTOR_MIN"],
-                scaling_factor_max=self.WT_PARAMETERS["SHAFT_SCALING_FACTOR_MAX"],
-            )
-
-            self.set_camera(
-                height_min=self.CAMERA["MIN_HEIGHT"],
-                height_max=self.CAMERA["MAX_HEIGHT"],
-                pitch_centered=self.CAMERA["PITCH_CENTERED"],
-                angle_bound=self.CAMERA["ANGLE_BOUND"],
-                housing_height=self.WT_PARAMETERS["HOUSING_HEIGHT"],
-            )
-
-            # create yolo text file with the labels
-            keypoints = self.create_yolo_text_file(
-                path_keypoints,
-                wea_selection,
-                bpy.context.scene.camera,
-                bpy.context.scene,
-                scaling_factors,
-            )
-
-            if self.random_background:
-                # only the components of the front wind turbine are made visible
-                for obj in bpy.context.scene.objects:
-                    obj.hide_render = True
-                for wea in wea_selection:
-                    wea.housing.hide_render = False
-                    wea.tower.hide_render = False
-                    wea.rotor.hide_render = False
-
-            helper.set_category_ids(wea_selection)
-
-            bproc.renderer.set_output_format(enable_transparency=self.random_background)
-            bproc.renderer.set_noise_threshold(0.00001)
 
             # render RGB image
             data = bproc.renderer.render()
